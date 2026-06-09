@@ -27,3 +27,7 @@ build.ninja
 
 CLAUDE.md
 AGENTS.md
+
+# FileLogSink standalone test driver build artifacts (keep source only)
+tools/test-filelogsink/test_filelogsink.exe
+tools/test-filelogsink/test-out/
