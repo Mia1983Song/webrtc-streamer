@@ -30,6 +30,7 @@
 
 #include "PeerConnectionManager.h"
 #include "HttpServerRequestHandler.h"
+#include "FileLogSink.h" // [FORK] file log sink
 
 PeerConnectionManager *webRtcServer = NULL;
 
@@ -115,6 +116,8 @@ int main(int argc, char *argv[])
 	std::string localWebrtcUdpPortRange = "0:65535";
 	std::string extraHost;
 	int logLevel = webrtc::LS_NONE;
+	std::string logFilePath;                    // [FORK] -L: empty => no file sink (upstream behaviour)
+	int logFileLevel = webrtc::LS_INFO;         // [FORK] -F: file sink severity, independent of stdout
 	std::string webroot = GetDefaultRessourceDir(argv[0]);
 	std::string basePath;
 	std::string sslCertificate;
@@ -183,6 +186,12 @@ int main(int argc, char *argv[])
 			("q,publish-filter", "Specify publish filter", cxxopts::value<std::string>())
 			("o,null-codec", "Use null codec (keep frame encoded)")
 			("b,plan-b", "Use sdp plan-B (default use unifiedPlan)");
+
+		// [FORK] BEGIN: persist RTC_LOG to a file (CGICS-only, opt-in)
+		options.add_options("Logging")
+			("L,log-file", "Persist RTC_LOG to file (size-rotated, ~10MB x 5)", cxxopts::value<std::string>())
+			("F,log-file-level", "Severity for file log (default LS_INFO=1)", cxxopts::value<int>()->default_value("1"));
+		// [FORK] END
 
 		options.parse_positional({"urls"});
 		options.positional_help("[urls...]");
@@ -343,6 +352,35 @@ int main(int argc, char *argv[])
 			usePlanB = true;
 		}
 
+		// [FORK] BEGIN: file log sink options
+		if (result.count("log-file"))
+		{
+			logFilePath = result["log-file"].as<std::string>();
+		}
+
+		if (result.count("log-file-level"))
+		{
+			logFileLevel = result["log-file-level"].as<int>();
+		}
+		// [FORK] clamp -F into a USEFUL severity range. The enum spans 0..4, but a sink
+		// registered at LS_NONE(4) writes nothing -- so clamping up to LS_NONE turns a
+		// typo (e.g. -F 11) into a silently empty log, the exact failure we want to
+		// avoid for a file the operator explicitly enabled with -L. Clamp the upper
+		// bound to LS_ERROR(3) instead: a too-high value still yields an errors-only
+		// log, and to disable file logging you simply omit -L. (Clamping also avoids
+		// the UB of casting an out-of-range int to the enum.)
+		if (logFileLevel < webrtc::LS_VERBOSE)
+		{
+			std::cout << "log-file-level " << logFileLevel << " < 0, clamping to 0 (LS_VERBOSE)" << std::endl;
+			logFileLevel = webrtc::LS_VERBOSE;
+		}
+		else if (logFileLevel > webrtc::LS_ERROR)
+		{
+			std::cout << "log-file-level " << logFileLevel << " > 3, clamping to 3 (LS_ERROR) so an enabled log is never silently empty" << std::endl;
+			logFileLevel = webrtc::LS_ERROR;
+		}
+		// [FORK] END
+
 		if (result.count("urls"))
 		{
 			auto urls = result["urls"].as<std::vector<std::string>>();
@@ -366,6 +404,26 @@ int main(int argc, char *argv[])
 	webrtc::LogMessage::LogTimestamps();
 	webrtc::LogMessage::LogThreads();
 	std::cout << "Logger level:" << webrtc::LogMessage::GetLogToDebug() << std::endl;
+
+	// [FORK] BEGIN: register file log sink (only when -L given; file severity is independent of stdout)
+	std::unique_ptr<FileLogSink> fileLogSink;
+	if (!logFilePath.empty())
+	{
+		fileLogSink = std::make_unique<FileLogSink>(logFilePath);
+		if (fileLogSink->isOpen())
+		{
+			webrtc::LogMessage::AddLogToStream(fileLogSink.get(), (webrtc::LoggingSeverity)logFileLevel);
+			std::cout << "Log file: " << logFilePath << " level:" << logFileLevel << std::endl;
+		}
+		else
+		{
+			// [FORK] don't report a misleading success: if the file can't be opened, say
+			// so loudly and disable file logging instead of silently dropping every line.
+			std::cerr << "ERROR: cannot open log file '" << logFilePath << "' -- file logging DISABLED" << std::endl;
+			fileLogSink.reset();
+		}
+	}
+	// [FORK] END
 
 	webrtc::ThreadManager::Instance()->WrapCurrentThread();
 	webrtc::Thread *thread = webrtc::Thread::Current();
@@ -507,6 +565,13 @@ int main(int argc, char *argv[])
 			std::cout << "Cannot Initialize start HTTP server exception:" << ex.what() << std::endl;
 		}
 	}
+
+	// [FORK] BEGIN: detach file log sink before SSL/global teardown
+	if (fileLogSink)
+	{
+		webrtc::LogMessage::RemoveLogToStream(fileLogSink.get());
+	}
+	// [FORK] END
 
 	webrtc::CleanupSSL();
 	std::cout << "Exit" << std::endl;

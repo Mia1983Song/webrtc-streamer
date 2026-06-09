@@ -73,6 +73,13 @@ Usage:
   -q, --publish-filter arg      Specify publish filter
   -o, --null-codec              Use null codec (keep frame encoded)
   -b, --plan-b                  Use sdp plan-B (default use unifiedPlan)
+
+ Logging options:
+  -v, --verbose             Verbosity for stdout (use multiple times for more)
+  -L, --log-file arg        Persist RTC_LOG output to file (size-rotated,
+                            ~10MB x 5)
+  -F, --log-file-level arg  Severity for file log, independent of stdout
+                            (default LS_INFO=1)
 ```
 
 Arguments of '-H' are forwarded to option
