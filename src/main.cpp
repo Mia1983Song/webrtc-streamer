@@ -468,8 +468,15 @@ int main(int argc, char *argv[])
 		options.push_back("1000");
 		options.push_back("decode_url");
 		options.push_back("no");
+		// [FORK] civetweb registers allow_sendfile_call ONLY under #if defined(__linux__)
+		// (config_options in civetweb.c). Pushing it on any non-Linux platform (Windows,
+		// macOS, BSD) makes mg_start reject it with "Invalid configuration option:
+		// allow_sendfile_call", so the HTTP server never starts and the process dies at
+		// boot. Mirror civetweb's own guard exactly.
+#if defined(__linux__)
 		options.push_back("allow_sendfile_call");
 		options.push_back("no");
+#endif
 		if (!sslCertificate.empty())
 		{
 			options.push_back("ssl_certificate");
