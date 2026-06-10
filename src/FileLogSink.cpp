@@ -14,13 +14,84 @@
 
 #include "FileLogSink.h"
 
+#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <ios>
 
 // NOTE: never call RTC_LOG from inside a LogSink: the webrtc logging mutex is
 // held while sinks run, so re-entering the logger would deadlock. Internal
 // errors go to stderr directly.
+
+// [FORK] BEGIN: human-readable wall-clock timestamps for the file copy.
+// webrtc::LogMessage::LogTimestamps() (set globally in main.cpp) bakes a
+// process-relative "[sec:ms]" stamp into the message string before it reaches
+// any sink -- unreadable without knowing the process start time. We rewrite
+// ONLY the file copy here; stdout keeps upstream's relative stamp untouched.
+namespace
+{
+	// Format the current LOCAL wall-clock as "[YYYY-MM-DD HH:MM:SS.mmm] " into
+	// buf. Returns the byte count written (excluding NUL), or 0 if formatting
+	// failed/truncated (caller then writes no stamp rather than a partial one).
+	size_t formatWallClock(char* buf, size_t cap)
+	{
+		std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+		std::time_t secs = std::chrono::system_clock::to_time_t(now);
+		int millis = static_cast<int>(
+			std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
+
+		std::tm localTm{};
+#ifdef _WIN32
+		localtime_s(&localTm, &secs);
+#else
+		localtime_r(&secs, &localTm);
+#endif
+
+		int n = std::snprintf(buf, cap, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ",
+			localTm.tm_year + 1900, localTm.tm_mon + 1, localTm.tm_mday,
+			localTm.tm_hour, localTm.tm_min, localTm.tm_sec, millis);
+		if (n < 0 || static_cast<size_t>(n) >= cap)
+		{
+			buf[0] = '\0';
+			return 0;
+		}
+		return static_cast<size_t>(n);
+	}
+
+	// Strip a leading "[<sec>:<ms>]" process-relative timestamp (with an optional
+	// single trailing space) if present. Tolerant of arbitrary digit counts and
+	// returns msg unchanged when the pattern is absent (timestamps disabled, or a
+	// message arriving via the plain std::string overload), so it never corrupts
+	// a line it does not recognise.
+	absl::string_view stripRelativeTimestamp(absl::string_view msg)
+	{
+		const size_t n = msg.size();
+		size_t i = 0;
+		if (n < 4 || msg[i] != '[')
+		{
+			return msg;
+		}
+		++i;
+		size_t d1 = i;
+		while (i < n && msg[i] >= '0' && msg[i] <= '9') ++i;
+		if (i == d1 || i >= n || msg[i] != ':')
+		{
+			return msg;
+		}
+		++i;
+		size_t d2 = i;
+		while (i < n && msg[i] >= '0' && msg[i] <= '9') ++i;
+		if (i == d2 || i >= n || msg[i] != ']')
+		{
+			return msg;
+		}
+		++i;                              // consume ']'
+		if (i < n && msg[i] == ' ') ++i;  // consume single trailing space
+		return msg.substr(i);
+	}
+}
+// [FORK] END
 
 FileLogSink::FileLogSink(const std::string& path, size_t maxBytes, int maxFiles)
 	: m_path(path), m_maxBytes(maxBytes), m_maxFiles(maxFiles), m_currentBytes(0)
@@ -90,10 +161,20 @@ void FileLogSink::writeLocked(absl::string_view msg, webrtc::LoggingSeverity sev
 		return;
 	}
 
+	// [FORK] Rewrite the leading process-relative "[sec:ms]" stamp into a local
+	// wall-clock one so the file reads "[2026-06-10 14:30:25.123] [7] (file:line):
+	// msg" -- no conversion against the process start time needed. lineBytes is the
+	// ACTUAL on-disk length (stamp + stripped body), used for both the rotation
+	// pre-check and the byte accounting so the size cap stays accurate.
+	char stamp[32];
+	size_t stampLen = formatWallClock(stamp, sizeof(stamp));
+	absl::string_view body = stripRelativeTimestamp(msg);
+	size_t lineBytes = stampLen + body.size();
+
 	// Rotate before writing if this message would exceed the cap. Guard on
 	// m_currentBytes > 0 so a single oversized message never spins rotation on
 	// an empty file.
-	if (m_maxBytes > 0 && m_currentBytes > 0 && m_currentBytes + msg.size() > m_maxBytes)
+	if (m_maxBytes > 0 && m_currentBytes > 0 && m_currentBytes + lineBytes > m_maxBytes)
 	{
 		rotateLocked();
 	}
@@ -105,7 +186,11 @@ void FileLogSink::writeLocked(absl::string_view msg, webrtc::LoggingSeverity sev
 		return;
 	}
 
-	m_stream.write(msg.data(), static_cast<std::streamsize>(msg.size()));
+	if (stampLen > 0)
+	{
+		m_stream.write(stamp, static_cast<std::streamsize>(stampLen));
+	}
+	m_stream.write(body.data(), static_cast<std::streamsize>(body.size()));
 
 	// [FORK] OnLogMessage runs while WebRTC holds its global logging lock, so a
 	// synchronous flush on EVERY record serializes all logging threads behind one
@@ -142,7 +227,7 @@ void FileLogSink::writeLocked(absl::string_view msg, webrtc::LoggingSeverity sev
 		return;
 	}
 
-	m_currentBytes += msg.size();
+	m_currentBytes += lineBytes;
 }
 
 void FileLogSink::rotateLocked()

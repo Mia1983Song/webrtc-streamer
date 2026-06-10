@@ -206,6 +206,54 @@ static void test_oversized_message() {
 }
 
 // -----------------------------------------------------------------------------
+// 6. wall-clock timestamp — the file copy replaces webrtc's process-relative
+// "[sec:ms]" stamp with a local "[YYYY-MM-DD HH:MM:SS.mmm] " stamp, while
+// leaving the rest of the line (thread id, source location, message) intact.
+// -----------------------------------------------------------------------------
+static void test_wallclock_timestamp() {
+	fs::path dir = "test-out/wallclock";
+	reset_dir(dir);
+	fs::path log = dir / "test.log";
+
+	{
+		FileLogSink sink(log.string(), 10 * 1024 * 1024, 5);
+		// (a) a line shaped like real webrtc output: relative stamp must be stripped
+		sink.OnLogMessage(
+			"[002:451] [7] (rtspvideocapturer.cpp:31): RTSPVideoCapturer:onError error:404\n",
+			webrtc::LS_ERROR, nullptr);
+		// (b) a line with no relative stamp (plain overload): stamp still prepended,
+		// body kept verbatim
+		sink.OnLogMessage("plain line without relative stamp\n");
+	}
+
+	std::string content = read_file(log);
+
+	// the process-relative token must be gone
+	CHECK(content.find("[002:451]") == std::string::npos);
+	// the rest of the webrtc line survives untouched
+	CHECK(content.find("[7] (rtspvideocapturer.cpp:31): RTSPVideoCapturer:onError error:404\n")
+	      != std::string::npos);
+	// plain line body kept
+	CHECK(content.find("plain line without relative stamp\n") != std::string::npos);
+
+	// every line begins with "[20" — the century of the wall-clock year. This
+	// also proves the plain line got a stamp prepended (it has no '[' otherwise).
+	CHECK(content.size() >= 3);
+	CHECK(content.compare(0, 3, "[20") == 0);
+	size_t nl = content.find('\n');
+	CHECK(nl != std::string::npos && nl + 1 < content.size());
+	CHECK(content.compare(nl + 1, 3, "[20") == 0);
+
+	// shape check on the stamp: "[YYYY-MM-DD HH:MM:SS.mmm] " is 26 chars; the
+	// chars at the fixed offsets must be the date/time separators.
+	CHECK(content[5] == '-' && content[8] == '-' && content[11] == ' ');
+	CHECK(content[14] == ':' && content[17] == ':' && content[20] == '.');
+	CHECK(content[24] == ']' && content[25] == ' ');
+
+	std::printf("[PASS] wall-clock timestamp (relative stamp stripped, body intact)\n");
+}
+
+// -----------------------------------------------------------------------------
 int main() {
 	std::printf("=== FileLogSink standalone tests ===\n");
 	test_basic_write();
@@ -213,6 +261,7 @@ int main() {
 	test_append_across_restart();
 	test_multithread();
 	test_oversized_message();
+	test_wallclock_timestamp();
 	std::printf("\nALL TESTS PASSED\n");
 	return 0;
 }
