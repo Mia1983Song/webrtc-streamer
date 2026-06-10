@@ -39,3 +39,9 @@ if (MSVC)
 else()
 	target_compile_options(test_filelogsink PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Register with CTest so CI can run it generator-agnostically (the binary path
+# differs between multi-config MSVC and single-config Makefiles):
+#   ctest --test-dir build -C Release --output-on-failure
+enable_testing()
+add_test(NAME filelogsink COMMAND test_filelogsink)

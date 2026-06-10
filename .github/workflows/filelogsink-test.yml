@@ -1,0 +1,43 @@
+# [FORK] Standalone unit test for FileLogSink (the file-logging feature).
+# Intentionally light: it does NOT fetch the ~20GB WebRTC tree — the test driver
+# stubs out absl/webrtc (see tools/test-filelogsink/), so it builds with just the
+# runner's stock cmake + C++20 compiler in ~1-2 min. This is the only fork-owned
+# test that runs without the full WebRTC build, so it gates the FileLogSink logic
+# (rotation, append, thread-safety, wall-clock timestamp rewrite) on every push.
+name: FileLogSink unit test
+
+on:
+  push:
+    paths:
+      - 'src/FileLogSink.cpp'
+      - 'inc/FileLogSink.h'
+      - 'tools/test-filelogsink/**'
+      - '.github/workflows/filelogsink-test.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Cover both timestamp code paths: _WIN32 localtime_s (windows) and
+        # localtime_r (ubuntu + macos).
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # All three runners ship cmake + a C++20 compiler (g++/MSVC/AppleClang),
+      # so no toolchain install step is needed.
+      - name: configure
+        run: cmake -B tools/test-filelogsink/build -S tools/test-filelogsink
+
+      - name: build
+        run: cmake --build tools/test-filelogsink/build --config Release
+
+      # ctest resolves the binary path across single/multi-config generators.
+      # The driver exits non-zero on the first failed CHECK, so a red test = red job.
+      - name: test
+        run: ctest --test-dir tools/test-filelogsink/build -C Release --output-on-failure
