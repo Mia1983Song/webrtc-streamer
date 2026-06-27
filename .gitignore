@@ -32,3 +32,6 @@ AGENTS.md
 tools/test-filelogsink/test_filelogsink.exe
 tools/test-filelogsink/test-out/
 tools/test-filelogsink/build/
+
+/deploy-*/
+/logs/

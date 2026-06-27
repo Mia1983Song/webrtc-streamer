@@ -28,9 +28,14 @@ class RTSPVideoCapturer : public LiveVideoSource<RTSPConnection>
 		
 		// overide RTSPConnection::Callback
 		virtual void    onConnectionTimeout(RTSPConnection& connection) override {
+				// [FORK] Phase0: live555 logs timeouts via envir()->stderr only; surface to FileLogSink so
+				// "connected then stalled" becomes visible (CC-878 freeze telemetry).
+				RTC_LOG(LS_WARNING) << "RTSPVideoCapturer:onConnectionTimeout url:" << m_liveclient.getUrl();
 				connection.start();
 		}
 		virtual void    onDataTimeout(RTSPConnection& connection) override {
+				// [FORK] Phase0: no RTP received within timeout while the session was up => stream stall.
+				RTC_LOG(LS_WARNING) << "RTSPVideoCapturer:onDataTimeout (no RTP within timeout) url:" << m_liveclient.getUrl();
 				connection.start();
 		}
 		virtual void    onError(RTSPConnection& connection,const char* erro) override;
