@@ -90,7 +90,7 @@ public:
                 m_codec[id] = codec;
                 success = true;
             }
-            RTC_LOG(LS_INFO) << "LiveVideoSource::onNewSession success:" << success << "\n";
+            RTC_LOG(LS_WARNING) << "LiveVideoSource::onNewSession success:" << success << "\n"; // [FORK][debug] temporarily LS_WARNING (was LS_INFO) so it survives -F 2 during CC-878 diagnosis; revert to LS_INFO when done
             if (success) 
             {
                 struct timeval presentationTime;
@@ -130,7 +130,7 @@ public:
                 }
                 else
                 {
-                    RTC_LOG(LS_INFO) << "LiveVideoSource:onData SPS set format " << sps->width << "x" << sps->height;
+                    RTC_LOG(LS_WARNING) << "LiveVideoSource:onData SPS set format " << sps->width << "x" << sps->height; // [FORK][debug] temporarily LS_WARNING (was LS_INFO) so it survives -F 2 during CC-878 diagnosis; revert to LS_INFO when done
                     postFormat(codec, sps->width, sps->height);
                 }
             }
@@ -206,7 +206,7 @@ public:
                 }
                 else
                 {
-                    RTC_LOG(LS_INFO) << "LiveVideoSource:onData SPS set format " << sps->width << "x" << sps->height;
+                    RTC_LOG(LS_WARNING) << "LiveVideoSource:onData SPS set format " << sps->width << "x" << sps->height; // [FORK][debug] temporarily LS_WARNING (was LS_INFO) so it survives -F 2 during CC-878 diagnosis; revert to LS_INFO when done
                     postFormat(codec, sps->width, sps->height);
                 }
             }
